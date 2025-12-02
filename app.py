@@ -91,6 +91,16 @@ def render_absolute_map(var):
     s = g[var].fillna(0).sort_values()
     categorias = pd.qcut(g[var].rank(method='first'), q=6, labels=False)
     g[f'faixa_{var.lower()}'] = categorias
+
+    # calcular intervalos numéricos de cada faixa
+    faixas_info = []
+    for i in range(6):
+        grupo = g.loc[g[f'faixa_{var.lower()}']==i, var]
+        if not grupo.empty:
+            faixas_info.append((grupo.min(), grupo.max()))
+        else:
+            faixas_info.append((None,None))
+
     m = folium.Map(location=center_from_geoms(g),zoom_start=7,tiles='CartoDB positron')
     folium.GeoJson(
         g[['NM_MUN',var,f'faixa_{var.lower()}','geometry']].to_json(),
@@ -104,9 +114,9 @@ def render_absolute_map(var):
             localize=True
         )
     ).add_to(m)
-    return m
+    return m, faixas_info
 
-def legenda(label):
+def legenda_cluster(label):
     st.markdown(f"### Legenda {label}")
     for l,desc in {
         'HH':'Alto entre altos',
@@ -122,6 +132,20 @@ def legenda(label):
             unsafe_allow_html=True
         )
 
+def legenda_absoluto(var, faixas_info):
+    st.markdown(f"### Legenda {var} (faixas)")
+    for i,(min_val,max_val) in enumerate(faixas_info):
+        if min_val is not None and max_val is not None:
+            intervalo = f"{int(min_val)} – {int(max_val)}"
+        else:
+            intervalo = "sem dados"
+        st.markdown(
+            f"<div style='display:flex;align-items:center'>"
+            f"<div style='width:14px;height:14px;background:{absolute_colors[i]};margin-right:6px;border:1px solid #888'></div>"
+            f"Faixa {i}: {intervalo}</div>",
+            unsafe_allow_html=True
+        )
+
 # ---------------- Interface ----------------
 st.sidebar.header("Configurações")
 mode = st.sidebar.selectbox("Selecione a visualização:",
@@ -129,8 +153,12 @@ mode = st.sidebar.selectbox("Selecione a visualização:",
 
 if mode=="Valores absolutos":
     var = st.sidebar.selectbox("Variável:",animal_vars)
-    m = render_absolute_map(var)
-    st_folium(m,width=850,height=600,returned_objects=[])
+    m, faixas_info = render_absolute_map(var)
+    col1,col2 = st.columns([4,1])
+    with col1:
+        st_folium(m,width=850,height=600,returned_objects=[])
+    with col2:
+        legenda_absoluto(var, faixas_info)
 
 elif mode=="Clusters LISA (univariado)":
     var = st.sidebar.selectbox("Variável:",animal_vars)
@@ -140,7 +168,7 @@ elif mode=="Clusters LISA (univariado)":
     with col1:
         st_folium(m,width=850,height=600,returned_objects=[])
     with col2:
-        legenda(var)
+        legenda_cluster(var)
 
 else:
     pair_label = st.sidebar.selectbox("Par bivariado:",[f"{x} vs {y}" for x,y in pairs])
@@ -151,4 +179,4 @@ else:
     with col1:
         st_folium(m,width=850,height=600,returned_objects=[])
     with col2:
-        legenda(f"{var_x} vs {var_y}")
+        legenda_cluster(f"{var_x} vs {var_y}")
