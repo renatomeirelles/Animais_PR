@@ -11,18 +11,20 @@ import libpysal
 st.set_page_config(page_title="Animais PR", layout="wide")
 st.title("Mapas e Clusters LISA — Paraná")
 
-# ---------------- Caminhos ----------------
-excel_path = "data/resultado_campanha_de_atualizacao_cadastral.xlsx"
-shp_path   = "data/PR_Municipios_2024.shp"
+# ---------------- Cache de dados ----------------
+@st.cache_data
+def load_data():
+    df = pd.read_excel("data/resultado_campanha_de_atualizacao_cadastral.xlsx", dtype={'CD_MUN': str})
+    gdf = gpd.read_file("data/PR_Municipios_2024.shp")
+    gdf['CD_MUN'] = gdf['CD_MUN'].astype(str)
+    g = gdf.merge(df, on='CD_MUN', how='left')
+    return g
 
-# ---------------- Carregar dados ----------------
-df = pd.read_excel(excel_path, dtype={'CD_MUN': str})
-gdf = gpd.read_file(shp_path)
-gdf['CD_MUN'] = gdf['CD_MUN'].astype(str)
-g = gdf.merge(df, on='CD_MUN', how='left')
+g = load_data()
 
 # ---------------- Variáveis ----------------
 animal_vars = ['Bovinos','Galinaceos','Ovinos','Suinos','Equinos','Caprinos','Muar','Total']
+pairs = [('Bovinos','Equinos'),('Bovinos','Muar'),('Suinos','Galinaceos'),('Ovinos','Caprinos')]
 
 # Paleta para clusters
 cluster_color_map = {
@@ -37,43 +39,28 @@ cluster_color_map = {
 w = libpysal.weights.Queen.from_dataframe(g)
 w.transform = 'r'
 
-# ---------------- Funções com cache ----------------
-@st.cache_resource
-def calcula_clusters_univariados(df, w, animal_vars):
-    results = {}
-    for var in animal_vars:
-        x = df[var].fillna(0).values
-        lisa = Moran_Local(x, w)
-        sig = lisa.p_sim < 0.05
-        labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
-        cluster = np.array(['Não sig.']*len(x),dtype=object)
-        cluster[sig] = [labels_map[c] for c in lisa.q[sig]]
-        df[f'cluster_{var.lower()}'] = cluster
-        results[var] = lisa
-    return df, results
+# ---------------- Funções de cálculo ----------------
+def calcula_cluster_univariado(df, var):
+    x = df[var].fillna(0).values
+    lisa = Moran_Local(x, w)
+    sig = lisa.p_sim < 0.05
+    labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
+    cluster = np.array(['Não sig.']*len(x),dtype=object)
+    cluster[sig] = [labels_map[c] for c in lisa.q[sig]]
+    df[f'cluster_{var.lower()}'] = cluster
+    return df, f'cluster_{var.lower()}'
 
-@st.cache_resource
-def calcula_clusters_bivariados(df, w, pairs):
-    results = {}
-    for var_x,var_y in pairs:
-        x = df[var_x].fillna(0).values
-        y = df[var_y].fillna(0).values
-        lisa_bv = Moran_Local_BV(x,y,w)
-        sig = lisa_bv.p_sim < 0.05
-        labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
-        cluster = np.array(['Não sig.']*len(x),dtype=object)
-        cluster[sig] = [labels_map[c] for c in lisa_bv.q[sig]]
-        col_name = f'cluster_{var_x.lower()}_{var_y.lower()}'
-        df[col_name] = cluster
-        results[(var_x,var_y)] = lisa_bv
-    return df, results
-
-# ---------------- Pares bivariados ----------------
-pairs = [('Bovinos','Equinos'),('Bovinos','Muar'),('Suinos','Galinaceos'),('Ovinos','Caprinos')]
-
-# Calcula clusters
-g, moran_uni = calcula_clusters_univariados(g,w,animal_vars)
-g, moran_bi  = calcula_clusters_bivariados(g,w,pairs)
+def calcula_cluster_bivariado(df, var_x, var_y):
+    x = df[var_x].fillna(0).values
+    y = df[var_y].fillna(0).values
+    lisa_bv = Moran_Local_BV(x,y,w)
+    sig = lisa_bv.p_sim < 0.05
+    labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
+    cluster = np.array(['Não sig.']*len(x),dtype=object)
+    cluster[sig] = [labels_map[c] for c in lisa_bv.q[sig]]
+    col_name = f'cluster_{var_x.lower()}_{var_y.lower()}'
+    df[col_name] = cluster
+    return df, col_name
 
 # ---------------- Funções de mapa ----------------
 def center_from_geoms(geo):
@@ -96,6 +83,22 @@ def render_cluster_map(cluster_col,label):
     ).add_to(m)
     return m
 
+def legenda(label):
+    st.markdown(f"### Legenda {label}")
+    for l,desc in {
+        'HH':'Alto entre altos',
+        'LL':'Baixo entre baixos',
+        'HL':'Alto entre baixos',
+        'LH':'Baixo entre altos',
+        'Não sig.':'Não significativo'
+    }.items():
+        st.markdown(
+            f"<div style='display:flex;align-items:center'>"
+            f"<div style='width:14px;height:14px;background:{cluster_color_map[l]};margin-right:6px;border:1px solid #888'></div>"
+            f"{l} ({desc})</div>",
+            unsafe_allow_html=True
+        )
+
 # ---------------- Interface ----------------
 st.sidebar.header("Configurações")
 mode = st.sidebar.selectbox("Selecione a visualização:",
@@ -103,35 +106,21 @@ mode = st.sidebar.selectbox("Selecione a visualização:",
 
 if mode=="Clusters LISA (univariado)":
     var = st.sidebar.selectbox("Variável:",animal_vars)
-    m = render_cluster_map(f'cluster_{var.lower()}',f'Cluster {var}')
+    g, cluster_col = calcula_cluster_univariado(g,var)
+    m = render_cluster_map(cluster_col,f'Cluster {var}')
     col1,col2 = st.columns([4,1])
     with col1:
         st_folium(m,width=850,height=600,returned_objects=[])
     with col2:
-        st.markdown("### Legenda")
-        for label,desc in {
-            'HH':'Alto entre altos',
-            'LL':'Baixo entre baixos',
-            'HL':'Alto entre baixos',
-            'LH':'Baixo entre altos',
-            'Não sig.':'Não significativo'
-        }.items():
-            st.markdown(f"<div style='display:flex;align-items:center'><div style='width:14px;height:14px;background:{cluster_color_map[label]};margin-right:6px;border:1px solid #888'></div>{label} ({desc})</div>",unsafe_allow_html=True)
+        legenda(var)
 
 else:
     pair_label = st.sidebar.selectbox("Par bivariado:",[f"{x} vs {y}" for x,y in pairs])
     var_x,var_y = pair_label.split(" vs ")
-    m = render_cluster_map(f'cluster_{var_x.lower()}_{var_y.lower()}',f'Cluster {var_x} vs {var_y}')
+    g, cluster_col = calcula_cluster_bivariado(g,var_x,var_y)
+    m = render_cluster_map(cluster_col,f'Cluster {var_x} vs {var_y}')
     col1,col2 = st.columns([4,1])
     with col1:
         st_folium(m,width=850,height=600,returned_objects=[])
     with col2:
-        st.markdown(f"### Legenda {var_x} vs {var_y}")
-        for label,desc in {
-            'HH':'Alto entre altos',
-            'LL':'Baixo entre baixos',
-            'HL':'Alto entre baixos',
-            'LH':'Baixo entre altos',
-            'Não sig.':'Não significativo'
-        }.items():
-            st.markdown(f"<div style='display:flex;align-items:center'><div style='width:14px;height:14px;background:{cluster_color_map[label]};margin-right:6px;border:1px solid #888'></div>{label} ({desc})</div>",unsafe_allow_html=True)
+        legenda(f"{var_x} vs {var_y}")
