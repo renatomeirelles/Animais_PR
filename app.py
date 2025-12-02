@@ -35,6 +35,9 @@ cluster_color_map = {
     'Não sig.': '#d9d9d9'
 }
 
+# Paleta para valores absolutos
+absolute_colors = ['#ffffb2','#fecc5c','#fd8d3c','#f03b20','#bd0026','#7f0000']
+
 # ---------------- Pesos espaciais ----------------
 w = libpysal.weights.Queen.from_dataframe(g)
 w.transform = 'r'
@@ -83,6 +86,26 @@ def render_cluster_map(cluster_col,label):
     ).add_to(m)
     return m
 
+def render_absolute_map(var):
+    # cria faixas por quantis
+    s = g[var].fillna(0).sort_values()
+    categorias = pd.qcut(g[var].rank(method='first'), q=6, labels=False)
+    g[f'faixa_{var.lower()}'] = categorias
+    m = folium.Map(location=center_from_geoms(g),zoom_start=7,tiles='CartoDB positron')
+    folium.GeoJson(
+        g[['NM_MUN',var,f'faixa_{var.lower()}','geometry']].to_json(),
+        style_function=lambda f:{
+            'fillColor': absolute_colors[f['properties'][f'faixa_{var.lower()}']],
+            'color':'black','weight':0.3,'fillOpacity':0.85
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=['NM_MUN',var,f'faixa_{var.lower()}'],
+            aliases=['Município',var,'Faixa (0-5)'],
+            localize=True
+        )
+    ).add_to(m)
+    return m
+
 def legenda(label):
     st.markdown(f"### Legenda {label}")
     for l,desc in {
@@ -102,9 +125,14 @@ def legenda(label):
 # ---------------- Interface ----------------
 st.sidebar.header("Configurações")
 mode = st.sidebar.selectbox("Selecione a visualização:",
-    ["Clusters LISA (univariado)","Clusters LISA (bivariado)"])
+    ["Valores absolutos","Clusters LISA (univariado)","Clusters LISA (bivariado)"])
 
-if mode=="Clusters LISA (univariado)":
+if mode=="Valores absolutos":
+    var = st.sidebar.selectbox("Variável:",animal_vars)
+    m = render_absolute_map(var)
+    st_folium(m,width=850,height=600,returned_objects=[])
+
+elif mode=="Clusters LISA (univariado)":
     var = st.sidebar.selectbox("Variável:",animal_vars)
     g, cluster_col = calcula_cluster_univariado(g,var)
     m = render_cluster_map(cluster_col,f'Cluster {var}')
