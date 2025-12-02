@@ -38,35 +38,35 @@ w = libpysal.weights.Queen.from_dataframe(g)
 w.transform = 'r'
 
 # ---------------- Funções com cache ----------------
-@st.cache_data
-def calcula_clusters_univariados(g, w, animal_vars):
+@st.cache_resource
+def calcula_clusters_univariados(df, w, animal_vars):
     results = {}
     for var in animal_vars:
-        x = g[var].fillna(0).values
+        x = df[var].fillna(0).values
         lisa = Moran_Local(x, w)
         sig = lisa.p_sim < 0.05
         labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
         cluster = np.array(['Não sig.']*len(x),dtype=object)
         cluster[sig] = [labels_map[c] for c in lisa.q[sig]]
-        g[f'cluster_{var.lower()}'] = cluster
+        df[f'cluster_{var.lower()}'] = cluster
         results[var] = lisa
-    return g, results
+    return df, results
 
-@st.cache_data
-def calcula_clusters_bivariados(g, w, pairs):
+@st.cache_resource
+def calcula_clusters_bivariados(df, w, pairs):
     results = {}
     for var_x,var_y in pairs:
-        x = g[var_x].fillna(0).values
-        y = g[var_y].fillna(0).values
+        x = df[var_x].fillna(0).values
+        y = df[var_y].fillna(0).values
         lisa_bv = Moran_Local_BV(x,y,w)
         sig = lisa_bv.p_sim < 0.05
         labels_map = {1:'HH',2:'LH',3:'LL',4:'HL'}
         cluster = np.array(['Não sig.']*len(x),dtype=object)
         cluster[sig] = [labels_map[c] for c in lisa_bv.q[sig]]
         col_name = f'cluster_{var_x.lower()}_{var_y.lower()}'
-        g[col_name] = cluster
+        df[col_name] = cluster
         results[(var_x,var_y)] = lisa_bv
-    return g, results
+    return df, results
 
 # ---------------- Pares bivariados ----------------
 pairs = [('Bovinos','Equinos'),('Bovinos','Muar'),('Suinos','Galinaceos'),('Ovinos','Caprinos')]
