@@ -8,3 +8,4 @@ libpysal
 esda
 splot
 matplotlib
+openpyxl
